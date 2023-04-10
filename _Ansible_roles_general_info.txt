@@ -1,0 +1,51 @@
+
+https://galaxy.ansible.com/docs/using/installing.html
+
+[root@plmelinxap04 ~]$ ansible-galaxy search "elasticsearch" | grep geerlingguy
+ geerlingguy.elasticsearch                                  Elasticsearch for Linux.
+ geerlingguy.elasticsearch-curator                          Elasticsearch curator for Linux.
+ geerlingguy.filebeat                                       Filebeat for Linux.
+ geerlingguy.fluentd                                        Fluentd for Linux.
+ geerlingguy.kibana                                         Kibana for Linux.
+ geerlingguy.logstash                                       Logstash for Linux.
+[root@plmelinxap04 ~]$
+
+ansible-galaxy info geerlingguy.elasticsearch (to see how many downloaded)
+
+Create your own role structure automatically:
+ansible-galaxy init yourrolename
+
+search in cli:
+ansible-galaxy search rolename
+ansible-galaxy info rolename
+ansible-galaxy install rolename
+(by default it will be installed in  /root/.ansible/roles/role_name)
+
+ansible-galaxy remove <role> 
+
+
+ansible-galaxy list  --> list all the roles and role versions you have installed
+ansible-config dump | grep -i ROLE
+
+
+
+role --> tasks dir --> main.yml
+
+You don't have to create the entire role dir structure, just tasks with main.yml is enough
+
+In playbook you can have both - roles and tasks:
+- name: Installing app
+  hosts: all
+  roles:  #(order of roles is important)
+	- python
+    - web
+   
+	
+Looks for role in the same folder where the playbooks is - create dir named roles over there or in default location: /etc/ansible/roles
+
+	
+Roles collection - https://galaxy.ansible.com/home (must to login to upload role)
+
+
+
+

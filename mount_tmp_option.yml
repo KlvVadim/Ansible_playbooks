@@ -1,0 +1,28 @@
+- hosts: all
+  become: yes
+  tasks:
+   - name: Getting /tmp mounted source device name
+     shell: mount | grep -E '\s/tmp\s' | awk '{print $1}'
+     register: "tmpsrc"
+     args:
+       warn: no
+
+   - debug:
+       msg: "Validated the /tmp mount output: {{ tmpsrc.stdout }}"
+
+   - name: Modifying mount with noexec and nosuid options for /tmp
+     mount:
+       path: "/tmp"
+       src: "{{ tmpsrc.stdout }}"
+       fstype: xfs
+       opts: "defaults,nodev"
+       state: present
+     when: tmpsrc.stdout == "/dev/mapper/rhel-tmp"
+
+   - name: Setting up  mount with noexec and nosuid options for /dev/shm
+     mount:
+       path: "/dev/shm"
+       src: tmpfs
+       fstype: tmpfs
+       opts: "defaults,nodev"
+       state: present

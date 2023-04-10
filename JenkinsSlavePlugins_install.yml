@@ -1,0 +1,302 @@
+
+# ansible-playbook xxxx.yml --syntax-check
+# user - jenkinsp
+
+---
+- hosts: all
+  become: yes
+  #  become_user: root
+  tasks:
+    - name: copy source files to destination
+      copy:
+        src: '/home/vadimkol/ansible_scripts/ansible_jnks_slave/jnkslaveplugins.tar'
+        dest: '/tmp/'
+        owner: root
+        group: root
+    - name: Unarchive installing plugins
+      unarchive:
+        src: '/tmp/jnkslaveplugins.tar'
+        dest: '/tmp/'
+        remote_src: yes
+        owner: root
+        group: root
+        
+    - name: Install required packages
+      yum:
+        name: "{{ item }}"
+        disable_gpg_check: yes
+        state: present
+      with_items:
+        - java-1.8.0-openjdk-devel.x86_64
+        - java-11-openjdk-devel.x86_64
+        - ansible
+        - git
+        - ca-certificates
+        - telnet
+        - git-svn.x86_64
+
+    - name: Copying Java 6 folder to /usr/lib/jvm and update Java 6 alternatives
+      command: "{{ item }}"
+      with_items:
+        - mv /tmp/jdk1.6.0_45 /usr/lib/jvm/
+        - update-alternatives --install /usr/bin/javac javac /usr/lib/jvm/jdk1.6.0_45/bin/javac 1
+        - update-alternatives --install /usr/bin/java java /usr/lib/jvm/jdk1.6.0_45/bin/java 1
+        - update-alternatives --install /usr/bin/javaws javaws /usr/lib/jvm/jdk1.6.0_45/bin/javaws 1  
+
+    - name: Unarchiving  plugins into /opt
+      unarchive:
+       src: "{{ item }}"
+       dest: '/opt/'
+       remote_src: yes
+       owner: jenkinsp
+       group: root
+       mode: 0754
+      with_items:
+        - '/tmp/apache-maven-3.6.3-bin.tar.gz'
+        - '/tmp/apache-maven-3.8.6-bin.tar.gz'
+        - '/tmp/allure-2.18.1.zip'
+        - '/tmp/helm-v3.9.1-linux-amd64.tar.gz'
+        - '/tmp/apache-ant-1.10.12-bin.tar.xz'
+        - '/tmp/sonar-scanner-cli-4.5.0.2216-linux.zip'
+        - '/tmp/sonar-scanner-cli-4.7.0.2747-linux.zip'
+        - '/tmp/node-v6.11.2-linux-x64.tar.xz'
+        - '/tmp/node-v12.21.0-linux-x64.tar.xz'
+        - '/tmp/node-v14.16.0-linux-x64.tar.xz'
+
+
+    - name: Moving kubectl pks tkgi to /usr/bin
+      copy:
+       src: "{{ item }}"
+       dest: '/usr/bin/'
+       remote_src: yes
+       owner: root
+       group: root
+       mode: 0755
+      with_items:
+        - '/tmp/kubectl'
+        - '/tmp/pks'
+        - '/tmp/tkgi'
+
+    - name: Changing ownership of Node and Maven's folder (for some reason these folders need special run)
+      file:
+       path: "{{ item }}"
+       owner: jenkinsp
+       group: root
+       mode: u=rwx,g=rx,o=r
+       recurse: yes
+      with_items:
+        - '/opt/apache-maven-3.6.3'
+        - '/opt/apache-maven-3.8.6'
+        - '/opt/node-v14.16.0-linux-x64'
+        - '/opt/node-v12.21.0-linux-x64'
+        - '/opt/node-v6.11.2-linux-x64'
+
+    - name: Adding  Node and Maven binaries to  $PATH 
+      lineinfile:
+        dest: "/etc/bashrc"
+        line: "{{ item.line }}"
+        create: yes
+        state: present
+      with_items:
+      - { line: 'PATH=$PATH:/opt/apache-maven-3.6.3/bin:/opt/node-v14.16.0-linux-x64/bin:/opt/linux-amd64' }
+  # Ansible opens his own SSH session and that means this "source" command is relevant for this Ansible's SSH  session but not yours, where you want to check this export
+  # command: "source /etc/bashrc
+ 
+    - name: Creating dir /home/jenkinsp/ and /data/workspace/
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+        owner: jenkinsp
+        group: LnxDevopsApp
+        recurse: yes
+      with_items:
+      - '/home/jenkinsp'
+      - '/data/workspace'   
+     
+    - name: Creating .npmrc files with content for npm
+      vars:
+        filecontent: |
+           always-auth=true
+           registry=http://yournexusserver:8085/repository/digital_npm_group/
+           _auth=UTRUV....w=
+      copy:
+        dest: "{{ item }}"
+        content: "{{ filecontent }}"
+      with_items:
+      - '/home/jenkinsp/.npmrc'
+      - '/root/.npmrc'
+
+    - name: Installing npm's newman module
+      shell: source /etc/bashrc && npm install -g newman
+    
+    - name: Changing ownership of Node folders again (due to newman installation )
+      file:
+        path: "{{ item }}"
+        owner: jenkinsp
+        group: root
+        mode: u=rwx,g=rx,o=r
+        recurse: yes
+      with_items:
+      - '/opt/node-v14.16.0-linux-x64'
+      - '/opt/node-v12.21.0-linux-x64'
+      - '/opt/node-v6.11.2-linux-x64'
+
+    - name: Commenting text block in .bash_profile (otherwise Node and Maven PATH will be displayed twice in echo $PATH)
+      replace:
+        path: "/$HOME/.bash_profile"
+        before: '# User specific environment *'
+        regexp: '^(.+)$'
+        replace: '# \1'
+    
+    - name: Add a line to a file /etc/sudoers.d/jenkinsp if the file does not exist
+      lineinfile:
+        path: /etc/sudoers.d/jenkinsp
+        line: "jenkinsp ALL=(ALL) NOPASSWD: ALL"
+        create: yes
+        owner: root
+        group: root
+        mode: 0440
+
+    - name: Adding jenkinsp to users.allow
+      lineinfile:
+        dest: "/etc/opt/quest/vas/users.allow"
+        line: "{{ item.line }}"
+        create: yes
+        state: present
+      with_items:
+        - { line: 'DOMAIN\jenkinsp' } 
+
+
+    - name: Coping certificates into new host's trust store
+      copy:
+        src: "{{ item }}"
+        dest: /etc/pki/ca-trust/source/anchors/
+        remote_src : yes
+        owner: root
+        group: root
+        mode: 0640
+      with_items:
+      - '/tmp/xxx.pem'
+      - '/tmp/xxx.pem'
+    
+    - name: Updating host's trust store with copied certificates
+      command: "{{ item }}"
+      with_items:
+      - 'update-ca-trust'
+      - 'update-ca-trust force-enable'
+
+
+    - name: Importing Root Base certificate to Java installations
+      java_cert:
+        cert_path: /tmp/ROOT_BASE.cer
+        keystore_path: "{{ item }}"
+        keystore_pass: 'changeit'
+        keystore_create: yes
+        state: present
+        cert_alias: hroot
+#       trust_cacert: true
+      with_items:
+      - '/usr/lib/jvm/jdk1.6.0_45/jre/lib/security/cacerts'
+      - '/usr/lib/jvm/java-1.8.0/jre/lib/security/cacerts'
+      - '/etc/pki/ca-trust/extracted/java/cacerts'
+
+    - name: Importing Inter Base certificate to Java installations
+      java_cert:
+        cert_path: /tmp/Inter_BASE.cer
+        keystore_path: "{{ item }}"
+        keystore_pass: 'changeit'
+        keystore_create: yes
+        state: present
+        cert_alias: hissuer
+#       trust_cacert: true
+      with_items:
+      - '/usr/lib/jvm/jdk1.6.0_45/jre/lib/security/cacerts'
+      - '/usr/lib/jvm/java-1.8.0/jre/lib/security/cacerts'
+      - '/etc/pki/ca-trust/extracted/java/cacerts'
+
+    - name: Unarchiving cyberark java agent "aim11.tar" into '/'
+      unarchive:
+       src: "{{ item }}"
+       dest: '/'
+       remote_src : yes
+       #group: root
+       #owner: root
+      with_items:
+      - '/tmp/aim11.tar'
+
+    - name: copy aimparms.sample to /var/tmp/ as aimparms
+      copy:
+        src: '/aim_install-11.3/aimparms.sample'
+        dest: '/var/tmp/aimparms'
+
+    - name: Installing cyberark java agent
+      command: "{{ item }}"
+      args:
+        chdir: '/aim_install-11.3'
+        warn: false
+      with_items:
+      - 'bash aim_update install'
+      - 'rpm -hiv CARKaim-11.02.0.22.x86_64.rpm'
+
+    - name: Install Docker 20.10.9 from RPM with  dependencies
+      yum:
+       name:
+         - '/tmp/containerd.io-1.5.11-3.1.el8.x86_64.rpm'
+         - '/tmp/docker-ee-20.10.9-3.el8.x86_64.rpm'
+         - '/tmp/docker-ee-cli-20.10.9-3.el8.x86_64.rpm'
+       disable_gpg_check: yes
+       state: present
+
+    - name: start and enable Docker service
+      systemd:
+       name: "{{ item }}"
+       state: started
+       enabled: yes
+      with_items:
+      - 'docker'
+   
+    - name: Getting /tmp mounted source device name
+      shell: mount | grep -E '\s/tmp\s' | awk '{print $1}'
+      register: "tmpsrc"
+      args:
+        warn: no
+
+    - debug:
+        msg: "Validated the /tmp mount output: {{ tmpsrc.stdout }}"
+
+    - name: Modifying mount with noexec and nosuid options for /tmp
+      mount:
+        path: "/tmp"
+        src: "{{ tmpsrc.stdout }}"
+        fstype: xfs
+        opts: "defaults,nodev"
+        state: present
+      when: tmpsrc.stdout == "/dev/mapper/rhel-tmp"
+
+    - name: Setting up  mount with noexec and nosuid options for /dev/shm
+      mount:
+        path: "/dev/shm"
+        src: tmpfs
+        fstype: tmpfs
+        opts: "defaults,nodev"
+        state: present
+    
+    ## Running this module will change keytool installation settings - it won't be in PATH: /usr/bin/keytool (which keytool) and so after that Java certificate installation will be failing
+    ## that's a reason why run it in the end, after installing Java certificates
+    ## to fix it - remove all Java instalations, install Java again and then install certificates and only then run this module to make priority
+    - name: Make Java 11 an alternative with highest priority
+      alternatives:
+        link: /usr/bin/java
+        name: java
+        path: /usr/lib/jvm/java-11-openjdk-11.0.15.0.10-2.el8_6.x86_64/bin/java
+        priority: 999
+   
+    - name: Rebooting new Jenkins worker
+      reboot:
+
+
+  # ===========================
+# Importing Root Base certificate to Java installations
+# keytool -importcert -alias hroot -file /tmp/ROOT_BASE.cer -keystore /usr/lib/jvm/java-1.8.0/jre/lib/security/cacerts
+# keytool -list -alias hsroot -keystore /usr/lib/jvm/java-1.8.0/jre/lib/security/cacert

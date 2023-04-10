@@ -1,0 +1,103 @@
+
+HELP in CLI:
+===========
+
+ansible-doc -l |grep file
+ansible-doc -t become -l
+ansible-doc -t module file (--> go to the end where module examples are)
+
+ansible.cfg:
+===========
+forks = 50
+callback_whitelist = timer, profile_tasks
+
+Gathering facts:
+================
+ansible all -m ansible.builtin.setup  #to see all facts
+
+Executing playbooks for troubleshooting:
+=======================================
+
+ansible-playbook playbook.yml --start-at-task="install packages" ---> To start executing your playbook at a particular task (usually the task that failed on the previous run)
+ansible-playbook playbook.yml --step   -- To execute a playbook interactively.With this option, Ansible stops on each task, and asks if it should execute that task. 
+                                          Answer “y” to execute the task, answer “n” to skip the task, and answer “c” to exit step mode, executing all remaining tasks without asking.
+
+Enabling the debugger
+=====================
+https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_debugger.html
+The debugger is not enabled by default. If you want to invoke the debugger during playbook execution, you must enable it first.
+
+- name: My play
+  hosts: all
+  debugger: always   ##( other options: never, on_failed, on_unreachable, on_skipped)
+  tasks:
+    - name: Execute a command
+
+To enable the task debugger from ansible.cfg, add:
+[defaults]
+enable_task_debugger = True
+
+
+Running on a single machine with run_once:
+==========================================
+- command: /opt/application/upgrade_db.py
+      run_once: true                ## to run only on the first host in your batch of hosts
+	  
+- command: /opt/application/upgrade_db.py
+  run_once: true
+  delegate_to: web01.example.org    ## to run the task on a specific host, instead of the first host in the batch, delegate the task
+
+
+
+To set an environment variable for an action on a remote host:
+==============================================================
+https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_environment.html
+- name: Install cobbler
+      ansible.builtin.package:
+        name: cobbler
+        state: present
+      environment:
+        http_proxy: http://proxy.example.com:8080
+
+
+
+ad hoc tasks:
+=============
+https://docs.ansible.com/ansible/latest/command_guide/intro_adhoc.html#intro-adhoc
+ansible inventory -a "/sbin/reboot" -f 10 -u username --become [--ask-become-pass]     #server reboot
+ansible inventory -m ansible.builtin.shell -a 'echo $TERM'                             # use shell module
+ansible inventory -m ansible.builtin.copy -a "src=/etc/hosts dest=/tmp/hosts"          # copy
+ansible inventory -m ansible.builtin.yum -a "name=acme state=XXXXX"                 # YUM
+ansible inventory -m ansible.builtin.service -a "name=httpd state=stopped"          # Services
+ansible inventory -m ansible.builtin.file -a "dest=/srv/foo/b.txt mode=600 owner=mdehaan group=mdehaan"                # chmod/chown
+ansible inventory -m ansible.builtin.file -a "dest=/path/to/c mode=755 owner=mdehaan group=mdehaan state=directory"    # create directory
+
+
+Ansible facts 
+=============
+https://www.redhat.com/sysadmin/playing-ansible-facts
+
+Accessing the facts
+
+- Using the Ansible ad-hoc commands:
+ansible all -m setup
+ansible all -m setup -a "filter=ansible_cmdline"
+
+
+Using the Ansible playbook:
+
+- hosts: all
+      tasks:
+      - debug:
+          var: ansible_facts
+
+- hosts: all
+    tasks:
+      - debug:
+          var: ansible_facts["cmdline"]
+    tasks:
+      - name: Geting VM Tools version
+        command: vmware-toolbox-cmd -v
+        register: vmversion
+	  - debug: msg="{{ vmversion }}"
+      - debug: msg="{{ ansible_hostname, ansible_distribution_major_version, vmversion.stdout }}"

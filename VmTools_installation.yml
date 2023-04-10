@@ -1,0 +1,20 @@
+---
+- hosts: all
+  become: yes
+  tasks:
+    - name: Geting VM Tools version
+      command: vmware-toolbox-cmd -v
+      register: vmversion
+    - debug: msg="{{ ansible_hostname, ansible_distribution_major_version, vmversion.stdout }}"
+
+
+---
+- hosts: all
+  become: yes
+  tasks:
+     - name: Updating VM Tools (only if already installed)
+       yum:
+         name: open-vm-tools
+         update_only: yes
+         disable_gpg_check: yes
+         state: latest

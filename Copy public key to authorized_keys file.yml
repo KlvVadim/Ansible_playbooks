@@ -1,0 +1,12 @@
+- hosts: all
+  become: yes
+  tasks:
+    - name: Copy public key to authorized_keys file on remote hosts
+      authorized_key:
+        user: zn-admin
+        key: '{{ item }}'
+        manage_dir: yes
+        # be aware the next line will remove all existing keys from  authorized_keys file and replace them with this one below
+        exclusive: yes
+      with_file:
+        - id_ssh_rsa_zn_admin.pub

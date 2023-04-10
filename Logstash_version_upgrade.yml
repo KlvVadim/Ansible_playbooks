@@ -1,0 +1,162 @@
+
+===============================================================================
+!!!!!! Check what with plugins installation and what to copy from backup !!!!!!
+------------------------------------------------------------------------------
+===============================================================================
+
+#Once version upgraded to 8.6:
+cd /usr/share/logstash
+cat JDK_VERSION
+Temurin-17.0.5+8
+
+#### Playbook execution:
+ansible-playbook -i inventory -e elk_version=8.6.x main.yml
+ansible-playbook logstash_upgrade_test_node.yml  -e elk_version=8.6.2
+
+======================================================================
+======================================================================
+##### Main Ansible Playbook main.yml()####
+
+- name: logstash-upgrade
+  import_playbook: logstash-upgrade.yml
+- name: elasticsearch-rolling-upgrade
+  import_playbook: elasticsearch-rolling-upgrade.yml
+- name: kibana-upgrade
+  import_playbook: kibana-upgrade.yml
+  
+======================================================================
+======================================================================
+#### Logstash Upgrade
+
+---
+## Run this playbook with elk_version var
+## ansible-playbook -i inventory -e elk_version=x.xx.x
+#
+- name: Logstash upgrade
+  hosts: elasticsearch
+  serial: 1
+  become: yes
+  tasks:
+  - name: remove file immutable attr from /etc/passwd
+    file:
+      path: '/etc/passwd'
+      attributes: '-i'
+
+  - name: set umask 0022 (not sure if that will work)
+    command: bash -c "umask 0022; umask"
+
+  - name: Get Logstash installed version
+    command: rpm -q logstash --qf %{VERSION}
+    #  changed_when: False
+    args:
+      warn: false
+    register: version_found
+
+  - name: Check if the given version newer than installed one
+    fail:
+      msg: The Logstash version given to upgrade is the same or less as already installed one ! Playbook will be stopped now !
+    when: (version_found.stdout is version_compare(elk_version, '==')) or (version_found.stdout is version_compare(elk_version, '>'))
+
+  - name: Copy Logstash installation rpm
+    copy:
+      src: '/home/lnxadmin/scripts/gitlab/ansible/elk_version_updater/files/{{ elk_version }}/logstash-{{ elk_version }}-x86_64.rpm'
+      dest: '/tmp/'
+      owner: root
+      group: root
+      mode: 0755
+
+  - name: Create ELK backup directory if it doesn't exist (hostname/date)
+    file:
+      path: '/backup/elk_backup/{{ ansible_hostname }}/{{ ansible_date_time.date }}'
+      state: directory
+      mode: 0755
+
+  - name: Backup of Logstash backup dir /etc/logstash
+    copy:
+      src: '/etc/logstash'
+      dest: '/backup/elk_backup/{{ ansible_hostname }}/{{ ansible_date_time.date }}/'
+      remote_src: yes
+
+  - name: Backup of default logstash file /etc/default/logstash (will copy file content to brand-new created one - etc_default_logstash)
+    copy:
+      src: '/etc/default/logstash'
+      dest: '/backup/elk_backup/{{ ansible_hostname }}/{{ ansible_date_time.date }}/logstash/etc_default_logstash'
+      remote_src: yes
+
+  - name: Stop Logstash
+    systemd:
+      name: logstash.service
+      state: stopped
+    register: logstash_stopped
+    until: logstash_stopped.status.ActiveState == "inactive"
+    retries: 50
+    delay: 2
+
+
+  - block:
+    - name: Logstash version upgrade
+      yum:
+        name: /tmp/logstash-{{ elk_version }}-x86_64.rpm
+        disable_gpg_check: yes
+        state: present
+      register: rpm_running
+    - debug: var="rpm_running"
+      when: version_found.stdout is version_compare(elk_version, '<')
+
+
+  - name: Adding lines to /etc/default/logstash file
+    lineinfile:
+      path: "/etc/default/logstash"
+      line: "{{ item.line }}"
+    with_items:
+      - { line:  'LS_NODE="{{ ansible_hostname }}"' }
+      - { line:  'LOGSTASH_KEYSTORE_PASS="WQmV2C8bX3uaJC"' }
+
+  - name: Fix for Logstash version 8.6 - removing some jvm options in /etc/logstash/jvm.options
+    lineinfile:
+       path: /etc/logstash/jvm.options
+       line: "{{ item }}"
+       state: absent
+       backup: yes
+    with_items:
+    - "-XX:+UseConcMarkSweepGC"
+    - "-XX:CMSInitiatingOccupancyFraction=75"
+    - "-XX:+UseCMSInitiatingOccupancyOnly"
+
+  - name: Installing Logstash plugins (make sure that this logstash server is authorizied in proxy server - otherwise it will fail)
+    command: "{{ item }}"
+    args:
+      chdir: '/usr/share/logstash/'
+      warn: false
+    with_items:
+    - './bin/logstash-plugin install --preserve logstash-filter-environment'
+    - './bin/logstash-plugin install --preserve logstash-filter-uuid'
+    - './bin/logstash-plugin install --preserve logstash-input-file'
+    environment:
+      http_proxy: 'http://10.40.69.171:8080/'
+      https_proxy: 'https://10.40.69.171:8080/'
+
+
+  - name: Rebooting Logstash server
+    reboot:
+
+  - name: Logstash service is enabled\started\running
+    systemd:
+      name: logstash
+      state: started
+      enabled: yes
+
+  - name: Sleep for 60 seconds in order to check that logstash service keeps running
+    wait_for:
+      delay: 60
+      timeout: 0
+
+  - name: Checking Logstash service status after 60 seconds of waiting
+    systemd:
+      name: logstash
+    register: logstash_service_status
+
+  - debug: var="logstash_service_status.status.ActiveState"
+  - fail:
+      msg: The Logstash service status on thsi upgrading server is not ACTIVE ! Playbook will be stopped now !
+    when: logstash_service_status.status.ActiveState != "active"

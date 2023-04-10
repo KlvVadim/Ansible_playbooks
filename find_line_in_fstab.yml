@@ -1,0 +1,11 @@
+---
+- hosts: all
+  become: yes
+ # check_mode: yes
+ # become_user: root
+  tasks:
+    - name: Looking for nfs line in fstab
+      command: grep -E '^servername*' /etc/fstab
+      register: nfs_line
+
+    - debug: msg="{{ nfs_line.stdout_lines }}"

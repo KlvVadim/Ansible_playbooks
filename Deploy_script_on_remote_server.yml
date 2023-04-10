@@ -1,0 +1,50 @@
+---
+- hosts: all
+  become: yes
+  tasks:
+     - name: Run local script on remote server
+       script: /root/RHEL_7_check.sh
+       args:
+         chdir: /tmp
+
+     - name: Find a tar file
+       find:
+         paths: "/tmp"
+         patterns: "*.FQDN.*"
+       register: tars
+
+     - name: Print find result
+       debug:
+         msg: "{{ tars }}"
+
+     - name: Change file permissions
+       file:
+         path: "{{ item.path }}"
+         mode: 0777
+       with_items: "{{ tars.files }}"
+
+     - name: Copy (fetch) file from remote client server to this master to /tmp/srika_sohnim/
+       fetch:
+         src: "{{ item.path }}"
+         dest: /tmp/srika_sohnim/
+         flat: yes
+       with_items: "{{ tars.files }}"
+
+- hosts: 127.0.0.1
+  tasks:
+     - name: Find a tar file on local host in /tmp/srika_sohnim/
+       find:
+         paths: "/tmp/srika_sohnim"
+         patterns: "*.harel-office.com.*"
+       register: tars
+
+     - name: Print find result
+       debug:
+         msg: "{{ tars }}"
+
+     - name: Change file permissions on locale host
+       file:
+         path: "{{ item.path }}"
+         #         path: /tmp/srika_sohnim/*
+         mode: 0777
+       with_items: "{{ tars.files }}"

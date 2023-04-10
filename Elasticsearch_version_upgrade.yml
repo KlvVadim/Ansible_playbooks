@@ -1,0 +1,261 @@
+
+https://github.com/elastic/ansible-elasticsearch/blob/main/README.md
+(look here for Multi Node Server Installations, plugins, API login and other config options)
+
+https://discuss.elastic.co/t/question-on-elasticsearch-upgrade-using-ansible/282519
+
+https://www.toptal.com/ansible/update-elastic-stack-ansible-playbooks ---> https://github.com/orgito/elk-upgrade
+
+Plugins:
+--------
+/usr/share/elasticsearch/bin/elasticsearch-plugin list
+mapper-size    -----------------------> The S3 repository plugin is now included in Elasticsearch. See S3 repository https://www.elastic.co/guide/en/elasticsearch/plugins/8.5/repository-s3.html
+repository-s3
+
+cd /usr/share/elasticsearch/
+./bin/elasticsearch-plugin install file:///tmp/mapper-size-7.16.2.zip
+
+===============================================
+---
+##### Elasticsearch rolling upgrade ######
+## Run as "ansible-playbook -i inventory -e elk_version=x.xx.x"
+
+- name: Elasticsearch upgrade
+  hosts: elasticsearch
+  serial: 1
+  become: yes
+  vars:
+    elasticsearch_user: 'elastic'
+    elasticsearch_password: 'password'
+  tasks:
+  - name: remove file immutable attr from /etc/passwd
+    file:
+      path: '/etc/passwd'
+      attributes: '-i'
+
+  - name: set umask 0022 (not sure if that will work)
+    command: bash -c "umask 0022; umask"
+
+  - name: Get Elastic installed version
+    command: rpm -q elasticsearch --qf %{VERSION}
+    args:
+      warn: false
+    register: version_found
+
+  - name: Check if the new version is not the same or less than installed one
+    fail:
+      msg: The Elasticsearch version given to upgrade is the same or less as already installed one ! Playbook will be stopped now !
+    when: (version_found.stdout is version_compare(elk_version, '==')) or (version_found.stdout is version_compare(elk_version, '>'))
+
+  - name: Copy Elasticsearch installation rpm and es plugins
+    copy:
+      src: "{{ item }}"
+      dest: '/tmp/'
+      owner: root
+      group: root
+      mode: 0755
+    with_items:
+    - '/home/lnxadmin/scripts/gitlab/ansible/elk_version_updater/files/{{ elk_version }}/elasticsearch-{{ elk_version }}-x86_64.rpm'
+    - '/home/lnxadmin/scripts/gitlab/ansible/elk_version_updater/files/{{ elk_version }}/mapper-size-{{ elk_version }}.zip'
+
+
+  - name: Create a backup directory if it doesn't exist (hostname/date)
+    file:
+      path: '/backup/elk_backup/elasticsearch/{{ ansible_hostname }}/{{ ansible_date_time.date }}'
+      state: directory
+      mode: 0755
+
+  - name: Backup of Elasticsearch dir /etc/elasticsearch
+    copy:
+      src: '/etc/elasticsearch'
+      dest: '/backup/elk_backup/elasticsearch/{{ ansible_hostname }}/{{ ansible_date_time.date }}/'
+      remote_src: yes
+
+  - name: Elasticsearch service is enabled\started\running
+    systemd:
+      name: elasticsearch
+      state: started
+      enabled: yes
+
+  - name: Making sure that shard allocation Enabled for the cluster
+    uri:
+      url: https://{{ ansible_ssh_host }}:9200/_cluster/settings
+      user: "{{ elasticsearch_user }}"
+      password: "{{ elasticsearch_password }}"
+      method: PUT
+      use_proxy: false
+      validate_certs: false
+      body_format: json
+      body: '{"persistent": {"cluster.routing.allocation.enable": null}}'
+
+  - name: Making sure that  cluster health is green
+    uri:
+      url: https://{{ ansible_ssh_host }}:9200/_cluster/health
+      method: GET
+      user: "{{ elasticsearch_user }}"
+      password: "{{ elasticsearch_password }}"
+      use_proxy: false
+      validate_certs: false
+    register: response
+    until: "response.json.status == 'green'"                                     
+    retries: 500
+    delay: 2
+
+  - name: Disable shard allocation for the cluster
+    uri:
+      url: https://{{ ansible_ssh_host }}:9200/_cluster/settings
+      user: "{{ elasticsearch_user }}"
+      password: "{{ elasticsearch_password }}"
+      method: PUT
+      use_proxy: false
+      validate_certs: false
+      body_format: json
+      body: '{"persistent": {"cluster.routing.allocation.enable": "primaries"}}'
+      return_content: yes
+    register: disable_allocation
+    retries: 10
+    delay: 10
+    until: disable_allocation.status == 200
+
+  - name: Performing a flush/Stoping the tasks associated with active machine learning jobs
+    uri:
+      url: https://{{ ansible_ssh_host }}:9200/{{ item }}
+      user: "{{ elasticsearch_user }}"
+      password: "{{ elasticsearch_password }}"
+      method: POST
+      use_proxy: false
+      validate_certs: false
+    with_items:
+      - "_flush"
+      - "_ml/set_upgrade_mode?enabled=true"
+  
+  - name: Getting elasticsearch plugins list
+    command: './bin/elasticsearch-plugin list'
+    args:
+      chdir: /usr/share/elasticsearch/
+    register: plugins_list
+  - debug: msg="{{ plugins_list.stdout_lines}}"
+
+  - name: Uninstall elasticsearch plugins
+    command: './bin/elasticsearch-plugin remove "{{ item }}"'
+    args:
+      chdir: /usr/share/elasticsearch/
+    with_items:
+    - "{{ plugins_list.stdout_lines}}"
+
+  - name: Stop Elasicsearch
+    systemd:
+      name: elasticsearch.service
+      state: stopped
+    register: es_stopped
+    until: es_stopped.status.ActiveState == "inactive"
+    retries: 50
+    delay: 5
+
+  - block:
+    - name: Elasticsearch version upgrade
+      yum:
+        name: /tmp/elasticsearch-{{ elk_version }}-x86_64.rpm
+        disable_gpg_check: yes
+        state: present
+      register: rpm_running
+    - debug: var="rpm_running"
+    when: version_found.stdout is version_compare(elk_version, '<')
+
+  - name: Install es plugins
+    command: './bin/elasticsearch-plugin install file:/tmp/"{{ item }}"'
+    args:
+      chdir: /usr/share/elasticsearch/
+    with_items:
+    - "mapper-size-{{ elk_version }}.zip"
+
+  - name: Change /data permissions (otherwise elastic service keeps failing)
+    file:
+      path: /data
+      mode: '0777'
+
+  - name: Rebooting Elasticsearch server
+    reboot:
+
+  - name: Elasticsearch service is enabled\started\running
+    systemd:
+      name: elasticsearch
+      state: started
+      enabled: yes
+
+  - name: Sleep for 60 seconds in order to check that elasticsearch service keeps running
+    wait_for:
+      delay: 60
+      timeout: 0
+
+  - name: Check Elasticsearch service status after 60 seconds of waiting
+    systemd:
+      name: elasticsearch
+    register: elasticsearch_service_status
+  - debug: var="elasticsearch_service_status.status.ActiveState"
+  - fail:
+      msg: The Elasticsearch service status on thsi upgrading server is not ACTIVE ! Playbook will be stopped now !
+    when: elasticsearch_service_status.status.ActiveState != "active"
+
+  - name: Find server IP on the list of cluster's nodes (just displaying the IP and the list)
+    command:  curl --noproxy "*" -k -XGET 'https://{{ elasticsearch_user }}:{{ elasticsearch_password }}@{{ ansible_ssh_host }}:9200/_cat/nodes'
+    register: list
+  - debug:
+      msg: "{{ list.stdout }}"
+    register: nodes_list
+  - debug:
+      msg: "{{ ansible_default_ipv4.address}}"
+    register: node_ip
+
+  - name: Sleep for 30 seconds in order to check (visually) that IP of the upgrading node is on the list of cluster's above
+    wait_for:
+      delay: 30
+      timeout: 0
+
+  - name: Reenable shard allocation for the cluster
+    uri:
+      url: https://{{ ansible_ssh_host }}:9200/_cluster/settings
+      user: "{{ elasticsearch_user }}"
+      password: "{{ elasticsearch_password }}"
+      method: PUT
+      use_proxy: false
+      validate_certs: false
+      body_format: json
+      body: '{"persistent": {"cluster.routing.allocation.enable": null}}'
+
+  - name: Making sure that active_shards_percent_as_number  == '100'
+    uri:
+      url: https://{{ ansible_ssh_host }}:9200/_cluster/health
+      method: GET
+      user: "{{ elasticsearch_user }}"
+      password: "{{ elasticsearch_password }}"
+      use_proxy: false
+      validate_certs: false
+    register: response
+    until: "response.json.active_shards_percent_as_number == '100'"                   
+    retries: 500
+    delay: 2
+
+  - name: Restarting machine learning jobs
+    uri:
+      url: https://{{ ansible_ssh_host }}:9200/{{ item }}
+      user: "{{ elasticsearch_user }}"
+      password: "{{ elasticsearch_password }}"
+      method: POST
+      use_proxy: false
+      validate_certs: false
+    with_items:
+      - "_ml/set_upgrade_mode?enabled=false"
+
+  - name: Making sure that  cluster health is green
+    uri:
+      url: https://{{ ansible_ssh_host }}:9200/_cluster/health
+      method: GET
+      user: "{{ elasticsearch_user }}"
+      password: "{{ elasticsearch_password }}"
+      use_proxy: false
+      validate_certs: false
+    register: response
+    until: "response.json.status == 'green'"                     
+    retries: 500
+    delay: 2

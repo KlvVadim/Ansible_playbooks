@@ -1,0 +1,115 @@
+
+	
+===============================================
+############# Kibana upgrade
+
+---
+## Run this playbook with elk_version var
+## ansible-playbook -i inventory -e elk_version=x.xx.x
+#
+- name: Kibana upgrade
+  hosts: elasticsearch
+  #  serial: 1  ## When upgrading several Kibana instances connected to the same Elasticsearch cluster, ensure that all outdated instances are shut down before starting the upgrade.
+  # https://www.elastic.co/guide/en/kibana/current/upgrade.html
+  become: yes
+  tasks:
+  - name: remove file immutable attr from /etc/passwd
+    file:
+      path: '/etc/passwd'
+      attributes: '-i'
+
+  - name: set umask 0022 (not sure if that will work)
+    command: bash -c "umask 0022; umask"
+
+  - name: Get Kibana installed version
+    command: rpm -q kibana --qf %{VERSION}
+    args:
+      warn: false
+    register: version_found
+
+  - name: Check if the given version newer than installed one
+    fail:
+      msg: The Kibana version given to upgrade is the same or less as already installed one ! Playbook will be stopped now !
+    when: (version_found.stdout is version_compare(elk_version, '==')) or (version_found.stdout is version_compare(elk_version, '>'))
+
+
+  - name: Copy Kibana installation rpm
+    copy:
+      src: '/home/lnxadmin/scripts/gitlab/ansible/elk_version_updater/files/{{ elk_version }}/kibana-{{ elk_version }}-x86_64.rpm'
+      dest: '/tmp/'
+      owner: root
+      group: root
+      mode: 0755
+
+  - name: Create a backup directory if it doesn't exist (hostname/date)
+    file:
+      path: '/backup/elk_backup/kibana/{{ ansible_hostname }}/{{ ansible_date_time.date }}'
+      state: directory
+      mode: 0755
+
+  - name: Backup of Kibana dir /etc/kibana
+    copy:
+      src: '/etc/kibana'
+      dest: '/backup/elk_backup/kibana/{{ ansible_hostname }}/{{ ansible_date_time.date }}/'
+      remote_src: yes
+
+  - name: Kibana service is stopped
+    systemd:
+      name: kibana
+      state: stopped
+    register: kibana_stopped
+    until: kibana_stopped.status.ActiveState == "inactive"
+    retries: 50
+    delay: 2
+
+
+
+  - block:
+    - name: Kibana version upgrade
+      yum:
+        name: /tmp/kibana-{{ elk_version }}-x86_64.rpm
+        disable_gpg_check: yes
+        state: present
+      register: rpm_running
+    - debug: var="rpm_running"
+    when: version_found.stdout is version_compare(elk_version, '<')
+
+
+  - name: Fix for Kibana version 8.6 - removing logging.dest in /etc/kibana/kibana.yml
+    lineinfile:
+      path: /etc/kibana/kibana.yml
+      line: "{{ item }}"
+      state: absent
+      backup: yes
+    with_items:
+    -  "logging.dest: /data/kibana/logs/kibana.log"
+
+  - name: Rebooting Kibana server
+    reboot:
+
+  - name: Sleep for 60 seconds before making a check that kibana service running
+    wait_for:
+      delay: 60
+      timeout: 0
+
+
+  - name: Kibana service is enabled\started\running
+    systemd:
+      name: kibana
+      state: started
+      enabled: yes
+
+  - name: Sleep for 10 seconds in order to check that kibana service keeps running
+    wait_for:
+      delay: 10
+      timeout: 0
+
+  - name: Checking Kibana service status after 10 seconds of waiting
+    systemd:
+      name: kibana
+    register: kibana_service_status
+  - debug: var="kibana_service_status.status.ActiveState"
+  - fail:
+      msg: The Kibana service status on thsi upgrading server is not ACTIVE ! Playbook will be stopped now !
+    when: kibana_service_status.status.ActiveState != "active"
+

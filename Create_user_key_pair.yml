@@ -1,0 +1,56 @@
+---
+- hosts: all
+  become: yes
+  tasks:
+    - name: Remove "immutable" attribute 
+	  file:
+        path: /etc/passwd
+        attr: -i
+    
+	- name: Create user zn-admin    
+	  user:        
+	  name: zn-admin
+	  password: "{{ 'userpassword' | password_hash('sha512') }}"
+	  state: present        
+	  create_home: true
+	  home: /home/zn-admin
+	  expires: -1
+	
+	- name: Set password expiration to never for user zn-admin 
+      command: chage -M 99999 zn-admin
+
+	
+	- name: Add user zn-admin to sudoers /etc/sudoers.d/zn-admin (create if the file does not exist)
+      lineinfile:
+        path: /etc/sudoers.d/zn-admin
+        line: "zn-admin ALL=(ALL) NOPASSWD: ALL"
+        create: yes
+        owner: root
+        group: root
+        mode: 0440  
+		  
+=======================================================================
+
+- hosts: all
+  become: yes
+  tasks:
+    - name: Copy public key to authorized_keys file on remote hosts
+      authorized_key:
+        user: zn-admin
+        key: '{{ item }}'
+        manage_dir: yes
+        # be aware the next line will remove all existing keys from  authorized_keys file and replace them with this one below
+        exclusive: yes
+      with_file:
+        - id_ssh_rsa_zn_admin.pub
+
+
+=======================================================================
+
+- hosts: all
+  become: yes
+  tasks:
+    - name: Generate OpenSSH key pair
+      openssh_keypair:
+        path: /tmp/id_ssh_rsa_zn_admin
+
