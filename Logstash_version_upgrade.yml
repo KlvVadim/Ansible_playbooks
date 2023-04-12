@@ -1,37 +1,19 @@
 
-===============================================================================
-!!!!!! Check what with plugins installation and what to copy from backup !!!!!!
-------------------------------------------------------------------------------
-===============================================================================
+#===============================================================================
+#!! Check what's with plugins installation and what to copy from backup !!!!!!
+#------------------------------------------------------------------------------
+#===============================================================================
 
-#Once version upgraded to 8.6:
-cd /usr/share/logstash
-cat JDK_VERSION
-Temurin-17.0.5+8
+##Once version upgraded to 8.6:
+#cd /usr/share/logstash
+#cat JDK_VERSION
+#Temurin-17.0.5+8
 
-#### Playbook execution:
-ansible-playbook -i inventory -e elk_version=8.6.x main.yml
-ansible-playbook logstash_upgrade_test_node.yml  -e elk_version=8.6.2
-
-======================================================================
-======================================================================
-##### Main Ansible Playbook main.yml()####
-
-- name: logstash-upgrade
-  import_playbook: logstash-upgrade.yml
-- name: elasticsearch-rolling-upgrade
-  import_playbook: elasticsearch-rolling-upgrade.yml
-- name: kibana-upgrade
-  import_playbook: kibana-upgrade.yml
-  
-======================================================================
-======================================================================
+#======================================================================
 #### Logstash Upgrade
-
 ---
 ## Run this playbook with elk_version var
 ## ansible-playbook -i inventory -e elk_version=x.xx.x
-#
 - name: Logstash upgrade
   hosts: elasticsearch
   serial: 1
