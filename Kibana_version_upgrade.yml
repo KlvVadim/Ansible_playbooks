@@ -1,12 +1,7 @@
-
-	
-===============================================
 ############# Kibana upgrade
-
 ---
 ## Run this playbook with elk_version var
 ## ansible-playbook -i inventory -e elk_version=x.xx.x
-#
 - name: Kibana upgrade
   hosts: elasticsearch
   #  serial: 1  ## When upgrading several Kibana instances connected to the same Elasticsearch cluster, ensure that all outdated instances are shut down before starting the upgrade.
