@@ -311,3 +311,20 @@
 # Importing Root Base certificate to Java installations
 # keytool -importcert -alias hroot -file /tmp/ROOT_BASE.cer -keystore /usr/lib/jvm/java-1.8.0/jre/lib/security/cacerts
 # keytool -list -alias hsroot -keystore /usr/lib/jvm/java-1.8.0/jre/lib/security/cacert
+
+  # ===========================
+#Installing awscli for aws jenkins servers (make sure that they use same "jenkins" user on AWS servers. Sometimes it is "jenkinsaws" )
+- name: Installing aws cli v2
+  command: "{{ item }}"
+  with_items:
+    - bash /tmp/aws/install
+- name: Changing ownership of /usr/local/aws-cli dir (for letting jenkinsaws run the aws commands)
+  file:
+     path: "{{ item }}"
+     owner: jenkinsaws
+     group: root
+     mode: u=rwx,g=rx
+     recurse: yes
+  with_items:
+    - '/usr/local/aws-cli'
+
