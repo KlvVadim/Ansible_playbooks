@@ -1,0 +1,40 @@
+## In case you already know Java version to which prioritize:
+- hosts: all
+  become: yes
+ # become_user: root
+  tasks:
+    - name: Make Java 11 an alternative with highest priority
+      alternatives:
+        link: /usr/bin/java
+        name: java
+        path: /usr/lib/jvm/java-11-openjdk-11.0.15.0.10-2.el8_6.x86_64/bin/java
+        priority: 999
+
+
+=====================================================
+ ## If you installing Java and so you don't know exactly version then use this:
+ 
+ - hosts: all
+  become: yes
+ # become_user: root
+  tasks:
+    - name: Get Java 11 path
+      shell: rpm --query --all --list java-11-openjdk* | grep 'bin/java$'
+      args:
+        warn: false
+      register: Java11_path
+    - debug: msg="{{ Java11_path.stdout }}"
+
+    - name: Set the VAR
+      set_fact:
+        java11_ver: "{{ Java11_path.stdout }}"
+
+    - debug: msg="{{ java11_ver }}"
+
+    - name: Make Java 11 an alternative with highest priority
+      alternatives:
+        link: /usr/bin/java
+        name: java
+        path: "{{ java11_ver }}"
+        priority: 999
+
