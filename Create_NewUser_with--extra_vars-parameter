@@ -1,5 +1,5 @@
 # Run this ansible-playbook command with "--extra_vars" parameter
-# Example:      ansible-playbook add_user_ALL_vars.yml --extra-vars '{ "new_user":"newusername" }'
+# Example:      ansible-playbook add_user_ALL_vars.yml --extra-vars '{ "new_user":"newusername" }'     # To use with default inventory file
 # Example:      ansible-playbook add_user_ALL_vars.yml --extra-vars '{ "new_user":"newusername" }' -i hostname1,hostname2,
 #
 - hosts: all
